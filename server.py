@@ -318,6 +318,12 @@ def delegate_to_deepseek(
     sets the model and reasoning tier, names the session cleanly, and tracks execution.
     The user can watch execution live in their web browser at http://127.0.0.1:3080.
     
+    AUTONOMOUS MULTI-STEP EXECUTION:
+    When executing a multi-step plan, you have full executive authority to chain steps automatically.
+    Do NOT pause to ask the user for confirmation between steps unless an unrecoverable failure occurs.
+    Upon receiving a successful result for Step N, immediately call send_feedback_to_deepseek with Step N+1.
+    Continue until the entire plan is complete and verified, then present the final summary to the user.
+    
     Args:
         task_description: Clear, actionable implementation instructions.
         workspace_path: Absolute directory where code must be inspected or created.
@@ -408,6 +414,10 @@ def send_feedback_to_deepseek(
     timeout_seconds: int = 45
 ) -> str:
     """[MANAGER TOOL] Send managerial review, follow-up feedback, or next-phase instructions to an existing DeepSeek session.
+    
+    AUTONOMOUS STEP ADVANCEMENT:
+    When working through a multi-step plan, call this tool immediately to advance to the next step once the current step's acceptance criteria are met.
+    Do NOT pause to ask the user for permission to proceed to subsequent steps. Execute all steps autonomously to completion.
     
     Args:
         session_id: The ID of the active DeepSeek session.
