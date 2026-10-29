@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepseek-mcp-bridge"
+version = "1.0.0"
+description = "Model Context Protocol (MCP) Bridge connecting Claude Desktop to DeepSeek Harness Web UI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Yasser Rezki" }
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "pyyaml>=6.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/rezkiyasser31-ship-it/deepseek-mcp-bridge"
+Repository = "https://github.com/rezkiyasser31-ship-it/deepseek-mcp-bridge"

@@ -20,19 +20,31 @@ A high-performance Model Context Protocol (MCP) bridge linking **Claude Desktop*
 ## Quick Setup
 
 1. **Start DeepSeek Harness Web UI:**
-   ```powershell
+   ```bash
    dsh web
    ```
-   *(Keep this terminal open or run it in the background).*
+   *(Keep this terminal open or run it in the background on `http://127.0.0.1:3080`).*
 
-2. **Install the Bridge:**
+2. **Clone & Install the Bridge:**
+   ```bash
+   git clone https://github.com/rezkiyasser31-ship-it/deepseek-mcp-bridge.git
+   cd deepseek-mcp-bridge
+   ```
+
+   **Using Python (Windows, macOS, Linux):**
+   ```bash
+   python -m pip install -r requirements.txt
+   python install.py
+   ```
+
+   **Or using PowerShell (Windows):**
    ```powershell
-   cd C:\Users\yasser\.gemini\deepseek-mcp-bridge
    powershell.exe -ExecutionPolicy Bypass -File .\install_bridge.ps1
    ```
 
 3. **Restart Claude Desktop:**
-   Completely quit Claude Desktop from the system tray and open it again.
+   Completely quit Claude Desktop from the system tray / menu bar and open it again.
+   Verify under **Settings -> Developer** that `deepseek` appears with all its tools.
 
 ---
 
