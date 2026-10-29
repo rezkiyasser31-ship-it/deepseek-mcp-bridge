@@ -34,27 +34,22 @@ $scriptPath = $MyInvocation.MyCommand.Path
 $bridgeDir = Split-Path -Parent $scriptPath
 $serverPath = Join-Path $bridgeDir "server.py"
 
-# 4. Find Claude Desktop config
-$standardPath = "$env:APPDATA\Claude\claude_desktop_config.json"
-$msixPath = "$env:LOCALAPPDATA\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json"
+# 4. Find all Claude Desktop config paths
+$candidatePaths = @(
+    "$env:APPDATA\Claude\claude_desktop_config.json",
+    "$env:LOCALAPPDATA\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json"
+)
 
-$configPath = $null
-if (Test-Path -Path $msixPath) {
-    $configPath = $msixPath
-} else {
-    $configPath = $standardPath
+# 5. Safely update JSON using Python (safe against BOM and multi-account wiping)
+Write-Host "[*] Registering DeepSeek bridge in Claude Desktop configs..."
+
+foreach ($configPath in $candidatePaths) {
     $configDir = Split-Path -Parent $configPath
     if (-not (Test-Path -Path $configDir)) {
         New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     }
-}
 
-Write-Host "[+] Target Claude Desktop config: $configPath"
-
-# 5. Safely update JSON using Python (safe against BOM and multi-account wiping)
-Write-Host "[*] Registering DeepSeek bridge in Claude Desktop config..."
-
-$pythonScript = @"
+    $pythonScript = @"
 import json
 import os
 import sys
@@ -71,7 +66,7 @@ if os.path.exists(config_path):
             if content:
                 config = json.loads(content)
     except Exception as e:
-        print(f'[-] Warning parsing existing config: {e}')
+        print(f'[-] Warning parsing existing config {config_path}: {e}')
 
 if 'mcpServers' not in config:
     config['mcpServers'] = {}
@@ -84,13 +79,14 @@ config['mcpServers']['deepseek'] = {
 with open(config_path, 'w', encoding='utf-8') as f:
     json.dump(config, f, indent=2)
 
-print('[+] Successfully merged DeepSeek bridge into mcpServers!')
+print(f'[+] Successfully merged DeepSeek bridge into {config_path}!')
 "@
 
-$tempScript = Join-Path $env:TEMP "patch_claude_deepseek.py"
-Set-Content -Path $tempScript -Value $pythonScript -Encoding UTF8
-& $pythonExe $tempScript
-Remove-Item $tempScript -ErrorAction SilentlyContinue
+    $tempScript = Join-Path $env:TEMP "patch_claude_deepseek.py"
+    Set-Content -Path $tempScript -Value $pythonScript -Encoding UTF8
+    & $pythonExe $tempScript
+    Remove-Item $tempScript -ErrorAction SilentlyContinue
+}
 
 Write-Host ""
 Write-Host "[SUCCESS] DeepSeek Harness Bridge registered successfully!"
