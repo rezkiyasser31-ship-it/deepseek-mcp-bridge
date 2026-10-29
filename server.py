@@ -402,8 +402,9 @@ Task Description:
     })
     log(f"Queued prompt for {session_id}")
 
-    # 6. Wait for response turn with safety timeout
-    result = wait_for_session_turn(session_id, timeout_seconds=40)
+    # 6. Wait for response turn with safety timeout (capped to 50s to prevent Claude client timeout)
+    safe_timeout = min(max(timeout_seconds, 10), 50)
+    result = wait_for_session_turn(session_id, timeout_seconds=safe_timeout)
     return json.dumps(result, indent=2)
 
 
@@ -422,7 +423,7 @@ def send_feedback_to_deepseek(
     Args:
         session_id: The ID of the active DeepSeek session.
         feedback: The instructions, corrections, or follow-up prompt.
-        timeout_seconds: Optional timeout parameter.
+        timeout_seconds: Optional timeout parameter (default 45s, max 50s).
     """
     log(f"send_feedback_to_deepseek called: session={session_id}")
 
@@ -435,20 +436,39 @@ def send_feedback_to_deepseek(
         }
     })
 
-    result = wait_for_session_turn(session_id, timeout_seconds=40)
+    safe_timeout = min(max(timeout_seconds, 10), 50)
+    result = wait_for_session_turn(session_id, timeout_seconds=safe_timeout)
     return json.dumps(result, indent=2)
 
 
 @app.tool()
-def inspect_deepseek_session(session_id: str) -> str:
-    """[MANAGER TOOL] Inspect the live status, step count, and untruncated output of a running or completed DeepSeek session.
+def inspect_deepseek_session(
+    session_id: str,
+    wait_seconds: int = 40
+) -> str:
+    """[MANAGER TOOL] Inspect status or wait for an ongoing DeepSeek task to conclude.
     
-    Use this when a previous task returned 'still_running' to check if DeepSeek has finished.
+    AUTONOMOUS CONTINUATION:
+    If a previous delegate_to_deepseek or send_feedback_to_deepseek call returned status 'still_running'
+    because an atomic step took longer than 45 seconds, call this tool with wait_seconds=40 immediately
+    in the same turn. This tool will wait safely for DeepSeek to conclude without concluding your message turn
+    or asking the user to intervene.
     
     Args:
         session_id: The ID of the session to inspect.
+        wait_seconds: Seconds to wait for the session to finish (default 40s, max 50s). If 0, takes an instant snapshot.
     """
-    log(f"inspect_deepseek_session called: session={session_id}")
+    log(f"inspect_deepseek_session called: session={session_id}, wait_seconds={wait_seconds}")
+
+    safe_wait = min(max(wait_seconds, 0), 50)
+    if safe_wait > 0:
+        res_list = rpc_call("session/list", {"_request": {}})
+        sessions = res_list.get("sessions", [])
+        target = next((s for s in sessions if s.get("sessionId") == session_id), None)
+        if target and target.get("running", False):
+            wait_res = wait_for_session_turn(session_id, timeout_seconds=safe_wait)
+            if wait_res.get("status") == "completed":
+                return json.dumps(wait_res, indent=2)
 
     # Check running state from list
     res_list = rpc_call("session/list", {"_request": {}})
