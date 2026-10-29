@@ -1,9 +1,0 @@
-[2026-10-29 00:06:36] delegate_to_deepseek called: workspace=C:/Users/yasser/Desktop/link
-[2026-10-29 00:06:36] Created DeepSeek session: session-20648133-ebca-4ec2-8bfc-2bfb9bd8f203
-[2026-10-29 00:06:36] Queued prompt for session-20648133-ebca-4ec2-8bfc-2bfb9bd8f203
-[2026-10-29 00:06:36] Waiting for DeepSeek session session-20648133-ebca-4ec2-8bfc-2bfb9bd8f203 (timeout=40s)
-[2026-10-29 00:06:39] Session session-20648133-ebca-4ec2-8bfc-2bfb9bd8f203 completed turn successfully.
-[2026-10-29 00:06:48] send_feedback_to_deepseek called: session=session-20648133-ebca-4ec2-8bfc-2bfb9bd8f203
-[2026-10-29 00:06:48] Waiting for DeepSeek session session-20648133-ebca-4ec2-8bfc-2bfb9bd8f203 (timeout=40s)
-[2026-10-29 00:06:53] Session session-20648133-ebca-4ec2-8bfc-2bfb9bd8f203 completed turn successfully.
-[2026-10-29 00:06:53] inspect_deepseek_session called: session=session-20648133-ebca-4ec2-8bfc-2bfb9bd8f203
