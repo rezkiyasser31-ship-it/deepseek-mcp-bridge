@@ -37,8 +37,17 @@ $serverPath = Join-Path $bridgeDir "server.py"
 # 4. Find all Claude Desktop config paths
 $candidatePaths = [System.Collections.Generic.List[string]]@(
     "$env:APPDATA\Claude\claude_desktop_config.json",
-    "$env:LOCALAPPDATA\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json"
+    "$env:LOCALAPPDATA\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json",
+    "$env:LOCALAPPDATA\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude-3p\claude_desktop_config.json"
 )
+
+# Also detect Claude-Data directory used when Claude runs with custom user-data-dir
+$claudeDataDir = "$env:LOCALAPPDATA\Claude-Data"
+if (Test-Path $claudeDataDir) {
+    Get-ChildItem -Path $claudeDataDir -Filter "claude_desktop_config.json" -Recurse | ForEach-Object {
+        $candidatePaths.Add($_.FullName)
+    }
+}
 
 # Also detect Claude Multi-Account native profiles
 $multiProfiles = Join-Path (Split-Path -Parent $env:USERPROFILE) "$env:USERNAME\.claude_multi\native_profiles"
