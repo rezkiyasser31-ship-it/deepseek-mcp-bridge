@@ -7,6 +7,10 @@ to the live DeepSeek Harness Web UI running on http://127.0.0.1:3080.
 
 Features:
 - Live Web UI synchronization (watch DeepSeek work in your browser).
+- Complete untruncated responses with reasoning traces & tool execution reporting.
+- Smart Model Routing: choose between DeepSeek-V4.1-Flash and DeepSeek-V4-Pro.
+- Configurable reasoning efforts: off, low, high, max.
+- Automatic clean session renaming in the browser sidebar.
 - Non-blocking 40-second async handoff (Claude Desktop never hits the 4-minute crash barrier).
 - Workspace directory binding.
 - Dynamic credential resolution from ~/.dsh/.credentials.yaml with HMAC-SHA256 cookie signing.
@@ -45,6 +49,9 @@ DeepSeek Harness is your Autonomous Engineering Team executing live in the local
 Your job is to:
 1. Brainstorm, analyze requirements, and create a comprehensive Project Specification and Milestone Plan.
 2. Delegate each technical implementation phase to DeepSeek Harness using `delegate_to_deepseek`.
+   - SMART MODEL ROUTING:
+     * Use `model="deepseek-flash"` with `reasoning_effort="low"` or `"off"` for fast file searches, simple refactors, documentation, and routine edits.
+     * Use `model="deepseek-v4-pro"` with `reasoning_effort="high"` or `"max"` for complex algorithmic architecture, complex bugs, and large refactors.
 3. Inform the user that they can watch DeepSeek execute live in their web browser at http://127.0.0.1:3080.
 4. When tasks take longer than 40 seconds, use `inspect_deepseek_session` to monitor progress.
 5. Review the execution results and provide feedback via `send_feedback_to_deepseek`.
@@ -172,6 +179,51 @@ def rpc_call(endpoint: str, args: Dict[str, Any]) -> Dict[str, Any]:
         raise
 
 
+def get_session_turn_details(session_id: str, as_of_seq: int) -> Dict[str, Any]:
+    """
+    Retrieve untruncated final response, executed tools, and reasoning traces
+    directly from the session event log.
+    """
+    if as_of_seq <= 0:
+        return {"response": "", "reasoning": "", "tools_called": []}
+    try:
+        page = rpc_call("session/page", {
+            "request": {
+                "address": {"kind": "session", "sessionId": session_id},
+                "throughSeq": as_of_seq,
+                "maxMessages": 50
+            }
+        })
+        records = page.get("records", [])
+        tools_called = []
+        assistant_text = ""
+        reasoning_text = ""
+
+        for r in records:
+            ev = r.get("event", {})
+            ev_type = ev.get("type")
+            if ev_type == "tool/call":
+                tname = ev.get("data", {}).get("name")
+                if tname and tname not in tools_called:
+                    tools_called.append(tname)
+            elif ev_type == "assistant/message":
+                msg = ev.get("data", {}).get("message", {})
+                for part in msg.get("content", []):
+                    if part.get("type") == "text":
+                        assistant_text = part.get("text", "")
+                    elif part.get("type") == "reasoning":
+                        reasoning_text = part.get("text", "")
+
+        return {
+            "response": assistant_text,
+            "reasoning": reasoning_text,
+            "tools_called": tools_called
+        }
+    except Exception as e:
+        log(f"Error reading turn details for {session_id}: {e}")
+        return {"response": "", "reasoning": "", "tools_called": []}
+
+
 def wait_for_session_turn(session_id: str, timeout_seconds: int = 40) -> Dict[str, Any]:
     """
     Poll session state until the model completes its current response turn,
@@ -181,7 +233,10 @@ def wait_for_session_turn(session_id: str, timeout_seconds: int = 40) -> Dict[st
     log(f"Waiting for DeepSeek session {session_id} (timeout={timeout_seconds}s)")
 
     last_response = ""
+    last_reasoning = ""
+    tools_called = []
     stats = {}
+    as_of_seq = 0
 
     while time.time() < deadline:
         try:
@@ -191,8 +246,9 @@ def wait_for_session_turn(session_id: str, timeout_seconds: int = 40) -> Dict[st
             target = next((s for s in sessions if s.get("sessionId") == session_id), None)
             is_running = target.get("running", False) if target else False
 
-            # 2. Check projections for turnOutline and latest response
+            # 2. Check projections for turn outline and seq
             res_proj = rpc_call("session/projections", {"request": {"sessionId": session_id}})
+            as_of_seq = res_proj.get("asOfSeq", 0)
             vals = res_proj.get("values", {})
             stats = vals.get("sessionStats", {})
             outline = vals.get("turnOutline", [])
@@ -203,13 +259,20 @@ def wait_for_session_turn(session_id: str, timeout_seconds: int = 40) -> Dict[st
                 if resp:
                     last_response = resp
 
-            # If agent is no longer running and we have a response, the turn has concluded!
+            # If agent is no longer running and we have reached a sequence point, fetch full untruncated content!
             if not is_running and last_response:
-                log(f"Session {session_id} completed turn successfully.")
+                details = get_session_turn_details(session_id, as_of_seq)
+                full_resp = details["response"] or last_response
+                full_reasoning = details["reasoning"]
+                tools_called = details["tools_called"]
+
+                log(f"Session {session_id} completed turn successfully. Tools: {tools_called}")
                 return {
                     "status": "completed",
                     "session_id": session_id,
-                    "agent_response": last_response,
+                    "agent_response": full_resp,
+                    "reasoning_summary": full_reasoning or None,
+                    "tools_executed": tools_called,
                     "stats": {
                         "turns": stats.get("turns", 0),
                         "steps": stats.get("steps", 0),
@@ -245,20 +308,25 @@ def delegate_to_deepseek(
     task_description: str,
     workspace_path: str,
     acceptance_criteria: Optional[str] = None,
+    model: str = "deepseek-flash",
+    reasoning_effort: str = "high",
     timeout_seconds: int = 45
 ) -> str:
     """[MANAGER TOOL] Delegate a technical task or implementation directive to DeepSeek Harness.
     
     Creates a new live session in DeepSeek Harness bound to the given workspace directory,
-    queues the task, and tracks progress. The user can watch execution live in their web browser.
+    sets the model and reasoning tier, names the session cleanly, and tracks execution.
+    The user can watch execution live in their web browser at http://127.0.0.1:3080.
     
     Args:
         task_description: Clear, actionable implementation instructions.
         workspace_path: Absolute directory where code must be inspected or created.
         acceptance_criteria: Optional verification checklist.
+        model: Model to use ('deepseek-flash' for speed, 'deepseek-v4-pro' for deep reasoning).
+        reasoning_effort: Reasoning effort ('off', 'low', 'high', 'max').
         timeout_seconds: Optional timeout (internally capped to prevent Claude Desktop UI crashes).
     """
-    log(f"delegate_to_deepseek called: workspace={workspace_path}")
+    log(f"delegate_to_deepseek called: workspace={workspace_path}, model={model}, reasoning={reasoning_effort}")
 
     # Validate workspace path
     wp = Path(workspace_path).expanduser().resolve()
@@ -273,7 +341,35 @@ def delegate_to_deepseek(
 
     log(f"Created DeepSeek session: {session_id}")
 
-    # 2. Format managerial directive
+    # 2. Select Model and Reasoning Effort
+    target_model = model if model in ["deepseek-flash", "deepseek-v4-pro"] else "deepseek-flash"
+    target_effort = reasoning_effort if reasoning_effort in ["off", "low", "high", "max"] else "high"
+    try:
+        rpc_call("session/selectModel", {
+            "request": {
+                "sessionId": session_id,
+                "provider": "deepseek-official",
+                "model": target_model,
+                "reasoningEffort": target_effort
+            }
+        })
+        log(f"Configured model={target_model}, effort={target_effort} for {session_id}")
+    except Exception as e:
+        log(f"Model selection warning: {e}")
+
+    # 3. Rename session for clean Web UI display
+    try:
+        clean_title = task_description.strip().split("\n")[0][:45]
+        rpc_call("session/rename", {
+            "request": {
+                "sessionId": session_id,
+                "title": clean_title
+            }
+        })
+    except Exception as e:
+        log(f"Session rename warning: {e}")
+
+    # 4. Format managerial directive
     formatted_prompt = f"""[EXECUTIVE DIRECTIVE FROM LEAD ARCHITECT]
 Workspace: {wp}
 Task Description:
@@ -289,7 +385,7 @@ Task Description:
         "3. Complete the task thoroughly and report back when finished."
     )
 
-    # 3. Queue prompt
+    # 5. Queue prompt
     rpc_call("session/prompt", {
         "request": {
             "requestId": str(uuid.uuid4()),
@@ -300,7 +396,7 @@ Task Description:
     })
     log(f"Queued prompt for {session_id}")
 
-    # 4. Wait for response turn with safety timeout
+    # 6. Wait for response turn with safety timeout
     result = wait_for_session_turn(session_id, timeout_seconds=40)
     return json.dumps(result, indent=2)
 
@@ -335,7 +431,7 @@ def send_feedback_to_deepseek(
 
 @app.tool()
 def inspect_deepseek_session(session_id: str) -> str:
-    """[MANAGER TOOL] Inspect the live status, step count, and output of a running or completed DeepSeek Harness session.
+    """[MANAGER TOOL] Inspect the live status, step count, and untruncated output of a running or completed DeepSeek session.
     
     Use this when a previous task returned 'still_running' to check if DeepSeek has finished.
     
@@ -352,28 +448,32 @@ def inspect_deepseek_session(session_id: str) -> str:
 
     # Check detailed projections
     res_proj = rpc_call("session/projections", {"request": {"sessionId": session_id}})
+    as_of_seq = res_proj.get("asOfSeq", 0)
     vals = res_proj.get("values", {})
     stats = vals.get("sessionStats", {})
     outline = vals.get("turnOutline", [])
     title = vals.get("title", "")
     working_dir = vals.get("workingDirectory", "")
 
-    latest_response = ""
-    latest_prompt = ""
-    if outline:
-        latest_turn = outline[-1]
-        latest_response = latest_turn.get("response", "")
-        latest_prompt = latest_turn.get("prompt", "")
-
     status = "running" if is_running else "completed"
+
+    # Get full untruncated response & tools executed
+    details = get_session_turn_details(session_id, as_of_seq)
+    full_response = details["response"]
+    reasoning_summary = details["reasoning"]
+    tools_called = details["tools_called"]
+
+    if not full_response and outline:
+        full_response = outline[-1].get("response", "")
 
     report = {
         "status": status,
         "session_id": session_id,
         "title": title,
         "working_directory": working_dir,
-        "latest_prompt": latest_prompt,
-        "latest_response": latest_response or ("Executing steps in browser..." if is_running else "No output recorded."),
+        "latest_response": full_response or ("Executing steps in browser..." if is_running else "No output recorded."),
+        "reasoning_summary": reasoning_summary or None,
+        "tools_executed": tools_called,
         "total_turns": len(outline),
         "steps_executed": stats.get("steps", 0),
         "llm_seconds": round(stats.get("llmMs", 0) / 1000, 1),
